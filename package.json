@@ -1,0 +1,36 @@
+{
+  "name": "yatrigo-backend",
+  "version": "1.0.0",
+  "description": "Redis-first ride hailing backend for small town dispatch reliability",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "workers": "node src/workers/index.js",
+    "worker:dispatch": "node src/workers/dispatch.worker.js",
+    "worker:persistence": "node src/workers/persistence.worker.js",
+    "worker:reconcile": "node src/workers/reconciliation.worker.js",
+    "test:single-driver": "node tests/single-driver-flow.js",
+    "test:multi-driver-race": "node tests/multi-driver-race.js",
+    "test:stress": "node tests/stress-dispatch.js",
+    "test:failures": "node tests/failure-scenarios.js",
+    "test:manual-flow": "node tests/manual-flow.js",
+    "test:manual-api-flow": "node tests/manual-api-flow.js"
+  },
+  "dependencies": {
+    "@socket.io/redis-adapter": "^8.3.0",
+    "bullmq": "^5.12.10",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "helmet": "^7.1.0",
+    "ioredis": "^5.4.1",
+    "mongoose": "^8.5.1",
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.8.1",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}
