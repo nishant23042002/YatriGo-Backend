@@ -26,7 +26,11 @@ async function releaseLock(redis, key, token) {
   }
 
   const released = await redis.eval(RELEASE_LOCK_SCRIPT, 1, key, token);
-  logger.debug("Lock released", { category: "REDIS", key, released: released === 1 });
+  logger.debug("Lock released", {
+    category: "REDIS",
+    key,
+    released: released === 1,
+  });
   return released;
 }
 
@@ -43,8 +47,20 @@ async function withLock(redis, key, ttlMs, fn) {
   }
 }
 
+async function withRetryLock(fn, retries = 3, delay = 50) {
+  for (let i = 0; i < retries; i++) {
+    const result = await fn();
+    if (result) return result;
+    await new Promise((res) => setTimeout(res, delay));
+  }
+  return null;
+}
+
+module.exports = { withRetryLock };
+
 module.exports = {
   acquireLock,
   releaseLock,
-  withLock
+  withLock,
+  withRetryLock,
 };

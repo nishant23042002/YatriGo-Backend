@@ -5,7 +5,7 @@ const levelOrder = {
   DEBUG: 10,
   INFO: 20,
   WARN: 30,
-  ERROR: 40
+  ERROR: 40,
 };
 
 function normalizeMeta(meta) {
@@ -17,7 +17,7 @@ function normalizeMeta(meta) {
     return {
       errorName: meta.name,
       errorMessage: meta.message,
-      errorStack: meta.stack
+      errorStack: meta.stack,
     };
   }
 
@@ -32,7 +32,7 @@ const colors = {
   red: "\x1b[31m",
   magenta: "\x1b[35m",
   blue: "\x1b[34m",
-  gray: "\x1b[90m"
+  gray: "\x1b[90m",
 };
 
 function inferCategory(message, meta = {}) {
@@ -115,20 +115,34 @@ function levelColor(level) {
 
 function formatMeta(meta = {}) {
   const cleaned = { ...meta };
+
   delete cleaned.category;
   delete cleaned.direction;
   delete cleaned.success;
 
-  if (!Object.keys(cleaned).length) {
+  // 🔥 ONLY keep important fields
+  const allowedKeys = [
+    "rideId",
+    "driverId",
+    "customerId",
+    "status",
+    "batchId",
+    "reason",
+    "eventName",
+  ];
+
+  const filtered = {};
+  for (const key of allowedKeys) {
+    if (cleaned[key] !== undefined) {
+      filtered[key] = cleaned[key];
+    }
+  }
+
+  if (!Object.keys(filtered).length) {
     return "";
   }
 
-  return util.inspect(cleaned, {
-    depth: 4,
-    colors: false,
-    compact: true,
-    breakLength: 140
-  });
+  return JSON.stringify(filtered);
 }
 
 function format(level, message, meta) {
@@ -151,29 +165,25 @@ function shouldLog(level) {
 
 const logger = {
   info(message, meta) {
-    if (!shouldLog("INFO")) {
-      return;
-    }
-    console.log(format("info", message, meta));
+    if (!shouldLog("INFO")) return;
+    console.log(format("INFO", message, meta));
   },
+
   warn(message, meta) {
-    if (!shouldLog("WARN")) {
-      return;
-    }
-    console.warn(format("warn", message, meta));
+    if (!shouldLog("WARN")) return;
+    console.warn(format("WARN", message, meta));
   },
+
   error(message, meta) {
-    if (!shouldLog("ERROR")) {
-      return;
-    }
-    console.error(format("error", message, meta));
+    if (!shouldLog("ERROR")) return;
+    console.error(format("ERROR", message, meta));
   },
+
   debug(message, meta) {
-    if (!shouldLog("DEBUG")) {
-      return;
-    }
-    console.debug(format("debug", message, meta));
+    if (!shouldLog("DEBUG")) return;
+    console.debug(format("DEBUG", message, meta));
   },
+
   child(baseMeta = {}) {
     return {
       info(message, meta) {
@@ -187,9 +197,8 @@ const logger = {
       },
       debug(message, meta) {
         logger.debug(message, { ...baseMeta, ...meta });
-      }
+      },
     };
-  }
+  },
 };
-
 module.exports = { logger };

@@ -9,16 +9,23 @@ const {
   DriverStatus,
   RideStatus,
   RideTransitions,
-  TerminalRideStatuses
+  TerminalRideStatuses,
 } = require("../utils/constants");
 const { parseJson, stringify, toNumber } = require("../utils/serializers");
 const {
   enqueueDispatchStart,
   enqueueDriverSync,
-  enqueueRideSync
+  enqueueRideSync,
 } = require("../queues");
 const { estimateTrip, normalizeRideType } = require("./eta.service");
-const { notifyRideCancelled, notifyRideCompleted, notifyRideRequested, notifyRideStarted, notifyRideStatusUpdate, notifyDriverArriving } = require("./notification.service");
+const {
+  notifyRideCancelled,
+  notifyRideCompleted,
+  notifyRideRequested,
+  notifyRideStarted,
+  notifyRideStatusUpdate,
+  notifyDriverArriving,
+} = require("./notification.service");
 const { calculateFinalFare, estimateFare } = require("./pricing.service");
 const { emitRideCancelledToDriver } = require("./socket-publisher.service");
 
@@ -26,7 +33,10 @@ async function refreshRideRealtimeKeys(rideId) {
   const multi = redis.multi();
   multi.expire(keys.rideHash(rideId), env.redis.realtimeStateTtlSeconds);
   multi.expire(keys.rideTimeline(rideId), env.redis.realtimeStateTtlSeconds);
-  multi.expire(keys.rideNotifiedDrivers(rideId), env.redis.realtimeStateTtlSeconds);
+  multi.expire(
+    keys.rideNotifiedDrivers(rideId),
+    env.redis.realtimeStateTtlSeconds,
+  );
   multi.expire(keys.rideResponses(rideId), env.redis.realtimeStateTtlSeconds);
   await multi.exec();
   logger.debug("Ride realtime TTL refreshed", { rideId });
@@ -65,7 +75,7 @@ function toRideSnapshot(hash = {}) {
     createdAt: hash.createdAt || null,
     updatedAt: hash.updatedAt || null,
     metadata: parseJson(hash.metadata, {}),
-    version: toNumber(hash.version, 0)
+    version: toNumber(hash.version, 0),
   };
 }
 
@@ -75,7 +85,7 @@ async function appendTimelineEvent(
   actorType = "SYSTEM",
   actorId = "",
   metadata = {},
-  at = new Date().toISOString()
+  at = new Date().toISOString(),
 ) {
   await redis.rpush(
     keys.rideTimeline(rideId),
@@ -84,8 +94,8 @@ async function appendTimelineEvent(
       actorType,
       actorId,
       at,
-      metadata
-    })
+      metadata,
+    }),
   );
   await refreshRideRealtimeKeys(rideId);
 }
@@ -106,7 +116,7 @@ function assertTransition(currentStatus, nextStatus) {
     throw new AppError(
       `Invalid transition from ${currentStatus} to ${nextStatus}`,
       409,
-      "INVALID_RIDE_TRANSITION"
+      "INVALID_RIDE_TRANSITION",
     );
   }
 }
@@ -117,7 +127,8 @@ function resolveActualDurationMinutes(ride, nowIso) {
     return ride.estimatedDurationMin || 0;
   }
 
-  const durationMs = new Date(nowIso).getTime() - new Date(acceptedAt).getTime();
+  const durationMs =
+    new Date(nowIso).getTime() - new Date(acceptedAt).getTime();
   if (!Number.isFinite(durationMs) || durationMs <= 0) {
     return ride.estimatedDurationMin || 0;
   }
@@ -146,18 +157,23 @@ async function releaseDriverAvailability(driverId, rideId, now) {
     multi.hset(keys.driverHash(driverId), {
       activeRideId: "",
       updatedAt: now,
-      status: DriverStatus.OFFLINE
+      status: DriverStatus.OFFLINE,
     });
   } else {
     multi.hset(keys.driverHash(driverId), {
       activeRideId: "",
       updatedAt: now,
-      status: DriverStatus.ONLINE
+      status: DriverStatus.ONLINE,
     });
     multi.sadd(keys.onlineDrivers(), driverId);
     multi.sadd(keys.availableDrivers(), driverId);
     if (driverHash.lat && driverHash.lng) {
-      multi.geoadd(keys.availableDriversGeo(), driverHash.lng, driverHash.lat, driverId);
+      multi.geoadd(
+        keys.availableDriversGeo(),
+        driverHash.lng,
+        driverHash.lat,
+        driverId,
+      );
     }
   }
 
@@ -165,8 +181,12 @@ async function releaseDriverAvailability(driverId, rideId, now) {
 }
 
 async function cleanupTerminalRideKeys(ride, now) {
-  const notifiedDrivers = await redis.smembers(keys.rideNotifiedDrivers(ride.rideId));
-  const currentCustomerRide = await redis.get(keys.customerActiveRide(ride.customerId));
+  const notifiedDrivers = await redis.smembers(
+    keys.rideNotifiedDrivers(ride.rideId),
+  );
+  const currentCustomerRide = await redis.get(
+    keys.customerActiveRide(ride.customerId),
+  );
   const multi = redis.multi();
 
   multi.srem(keys.activeRides(), ride.rideId);
@@ -176,7 +196,10 @@ async function cleanupTerminalRideKeys(ride, now) {
 
   multi.expire(keys.rideHash(ride.rideId), env.redis.activeRideTtlSeconds);
   multi.expire(keys.rideTimeline(ride.rideId), env.redis.activeRideTtlSeconds);
-  multi.expire(keys.rideNotifiedDrivers(ride.rideId), env.redis.activeRideTtlSeconds);
+  multi.expire(
+    keys.rideNotifiedDrivers(ride.rideId),
+    env.redis.activeRideTtlSeconds,
+  );
   multi.expire(keys.rideResponses(ride.rideId), env.redis.activeRideTtlSeconds);
   notifiedDrivers.forEach((driverId) => {
     multi.srem(keys.driverPendingDispatches(driverId), ride.rideId);
@@ -187,8 +210,8 @@ async function cleanupTerminalRideKeys(ride, now) {
     const token = `${ride.rideId}:${ride.currentBatchId}`;
     await Promise.all(
       (ride.currentBatchDrivers || []).map((driverId) =>
-        releaseLock(redis, keys.driverReservation(driverId), token)
-      )
+        releaseLock(redis, keys.driverReservation(driverId), token),
+      ),
     );
   }
 
@@ -200,7 +223,7 @@ async function cleanupTerminalRideKeys(ride, now) {
   logger.info("Ride terminal cleanup completed", {
     rideId: ride.rideId,
     status: ride.status,
-    driverId: ride.driverId || null
+    driverId: ride.driverId || null,
   });
 }
 
@@ -209,7 +232,7 @@ async function updateRideHash(rideId, fields) {
   await refreshRideRealtimeKeys(rideId);
   logger.debug("Ride hash updated in Redis", {
     rideId,
-    fields: Object.keys(fields)
+    fields: Object.keys(fields),
   });
   return getRide(rideId);
 }
@@ -224,7 +247,11 @@ async function requestRide({ customerId, origin, destination, metadata = {} }) {
       if (activeRideId) {
         const existingRide = await getRide(activeRideId);
         if (existingRide && !TerminalRideStatuses.has(existingRide.status)) {
-          throw new AppError("Customer already has an active ride", 409, "ACTIVE_RIDE_EXISTS");
+          throw new AppError(
+            "Customer already has an active ride",
+            409,
+            "ACTIVE_RIDE_EXISTS",
+          );
         }
       }
 
@@ -234,12 +261,12 @@ async function requestRide({ customerId, origin, destination, metadata = {} }) {
       const tripEstimate = estimateTrip({
         origin,
         destination,
-        rideType
+        rideType,
       });
       const estimatedFare = estimateFare({
         distanceKm: tripEstimate.estimatedDistanceKm,
         durationMin: tripEstimate.estimatedDurationMin,
-        rideType
+        rideType,
       });
       const payload = {
         rideId,
@@ -270,9 +297,9 @@ async function requestRide({ customerId, origin, destination, metadata = {} }) {
         updatedAt: now,
         metadata: stringify({
           ...metadata,
-          rideType
+          rideType,
         }),
-        version: "1"
+        version: "1",
       };
 
       const multi = redis.multi();
@@ -281,10 +308,17 @@ async function requestRide({ customerId, origin, destination, metadata = {} }) {
       multi.sadd(keys.activeRides(), rideId);
       multi.expire(keys.rideHash(rideId), env.redis.realtimeStateTtlSeconds);
       await multi.exec();
-      await appendTimelineEvent(rideId, "RIDE_REQUESTED", "CUSTOMER", customerId, {
-        origin,
-        destination
-      }, now);
+      await appendTimelineEvent(
+        rideId,
+        "RIDE_REQUESTED",
+        "CUSTOMER",
+        customerId,
+        {
+          origin,
+          destination,
+        },
+        now,
+      );
       await refreshRideRealtimeKeys(rideId);
 
       const ride = toRideSnapshot(payload);
@@ -293,10 +327,10 @@ async function requestRide({ customerId, origin, destination, metadata = {} }) {
       await enqueueDispatchStart(rideId, ride.version, 0, "REQUESTED");
       logger.info("Ride request persisted to Redis and queued for dispatch", {
         rideId,
-        customerId
+        customerId,
       });
       return ride;
-    }
+    },
   );
 
   if (!result) {
@@ -323,7 +357,7 @@ async function transitionRide(rideId, nextStatus, options = {}) {
       const update = {
         status: nextStatus,
         updatedAt: now,
-        version: String(ride.version + 1)
+        version: String(ride.version + 1),
       };
 
       if (options.driverId !== undefined) {
@@ -335,25 +369,31 @@ async function transitionRide(rideId, nextStatus, options = {}) {
           actorType: options.actorType,
           actorId: options.actorId,
           reason: options.reason,
-          at: now
+          at: now,
         });
       }
 
       if (nextStatus === RideStatus.COMPLETED) {
-        const actualDistanceKm = toNumber(
-          options.actualDistanceKm != null ? options.actualDistanceKm : ride.actualDistanceKm,
-          ride.estimatedDistanceKm
-        ) || ride.estimatedDistanceKm;
-        const actualDurationMin = toNumber(
-          options.actualDurationMin != null ? options.actualDurationMin : ride.actualDurationMin,
-          resolveActualDurationMinutes(ride, now)
-        ) || resolveActualDurationMinutes(ride, now);
+        const actualDistanceKm =
+          toNumber(
+            options.actualDistanceKm != null
+              ? options.actualDistanceKm
+              : ride.actualDistanceKm,
+            ride.estimatedDistanceKm,
+          ) || ride.estimatedDistanceKm;
+        const actualDurationMin =
+          toNumber(
+            options.actualDurationMin != null
+              ? options.actualDurationMin
+              : ride.actualDurationMin,
+            resolveActualDurationMinutes(ride, now),
+          ) || resolveActualDurationMinutes(ride, now);
         const waitingMin = toNumber(options.waitingMin, 0);
         const finalFare = calculateFinalFare({
           ride,
           actualDistanceKm,
           actualDurationMin,
-          waitingMin
+          waitingMin,
         });
 
         update.actualDistanceKm = String(actualDistanceKm);
@@ -365,7 +405,7 @@ async function transitionRide(rideId, nextStatus, options = {}) {
           baseFare: finalFare.baseFare,
           distanceCharge: finalFare.distanceCharge,
           durationCharge: finalFare.durationCharge,
-          waitingCharge: finalFare.waitingCharge
+          waitingCharge: finalFare.waitingCharge,
         });
         update.commissionAmount = String(finalFare.commissionAmount);
         update.driverEarning = String(finalFare.driverEarning);
@@ -379,7 +419,7 @@ async function transitionRide(rideId, nextStatus, options = {}) {
         options.actorType || "SYSTEM",
         options.actorId || "",
         options.metadata || {},
-        now
+        now,
       );
 
       const snapshot = await getRide(rideId);
@@ -409,18 +449,20 @@ async function transitionRide(rideId, nextStatus, options = {}) {
         previousStatus: ride.status,
         nextStatus,
         actorType: options.actorType || "SYSTEM",
-        actorId: options.actorId || ""
+        actorId: options.actorId || "",
       });
 
       if (nextStatus === RideStatus.CANCELLED) {
-        const impactedDrivers = new Set([...notifiedDrivers, snapshot.driverId].filter(Boolean));
+        const impactedDrivers = new Set(
+          [...notifiedDrivers, snapshot.driverId].filter(Boolean),
+        );
         for (const driverId of impactedDrivers) {
           await emitRideCancelledToDriver(driverId, snapshot);
         }
       }
 
       return snapshot;
-    }
+    },
   );
 
   if (!result) {
@@ -444,43 +486,55 @@ async function cancelRide(rideId, actorType, actorId, reason) {
     actorType,
     actorId,
     reason,
-    metadata: { reason }
+    metadata: { reason },
   });
 }
 
 async function markDriverArriving(rideId, driverId) {
   const ride = await getRide(rideId);
   if (!ride || ride.driverId !== driverId) {
-    throw new AppError("Driver is not assigned to this ride", 409, "RIDE_DRIVER_MISMATCH");
+    throw new AppError(
+      "Driver is not assigned to this ride",
+      409,
+      "RIDE_DRIVER_MISMATCH",
+    );
   }
 
   return transitionRide(rideId, RideStatus.ARRIVING, {
     actorType: "DRIVER",
-    actorId: driverId
+    actorId: driverId,
   });
 }
 
 async function startRide(rideId, driverId) {
   const ride = await getRide(rideId);
   if (!ride || ride.driverId !== driverId) {
-    throw new AppError("Driver is not assigned to this ride", 409, "RIDE_DRIVER_MISMATCH");
+    throw new AppError(
+      "Driver is not assigned to this ride",
+      409,
+      "RIDE_DRIVER_MISMATCH",
+    );
   }
 
   return transitionRide(rideId, RideStatus.ONGOING, {
     actorType: "DRIVER",
-    actorId: driverId
+    actorId: driverId,
   });
 }
 
 async function completeRide(rideId, driverId) {
   const ride = await getRide(rideId);
   if (!ride || ride.driverId !== driverId) {
-    throw new AppError("Driver is not assigned to this ride", 409, "RIDE_DRIVER_MISMATCH");
+    throw new AppError(
+      "Driver is not assigned to this ride",
+      409,
+      "RIDE_DRIVER_MISMATCH",
+    );
   }
 
   return transitionRide(rideId, RideStatus.COMPLETED, {
     actorType: "DRIVER",
-    actorId: driverId
+    actorId: driverId,
   });
 }
 
@@ -519,7 +573,7 @@ async function requeueRideAfterDriverLoss(rideId, driverId, reason) {
         currentBatchDrivers: "[]",
         currentBatchExpiresAt: "",
         updatedAt: now,
-        version: String(ride.version + 1)
+        version: String(ride.version + 1),
       });
       multi.expire(keys.rideHash(rideId), env.redis.realtimeStateTtlSeconds);
       await multi.exec();
@@ -530,15 +584,20 @@ async function requeueRideAfterDriverLoss(rideId, driverId, reason) {
         "SYSTEM",
         driverId,
         { reason },
-        now
+        now,
       );
 
       const updated = await getRide(rideId);
       await enqueueRideSync(rideId, updated.version);
       await notifyRideStatusUpdate(updated, { requeuedReason: reason });
-      await enqueueDispatchStart(rideId, updated.version, env.dispatch.retryDelayMs, "REQUEUE");
+      await enqueueDispatchStart(
+        rideId,
+        updated.version,
+        env.dispatch.retryDelayMs,
+        "REQUEUE",
+      );
       return updated;
-    }
+    },
   );
 
   if (!result) {
@@ -562,5 +621,5 @@ module.exports = {
   startRide,
   toRideSnapshot,
   transitionRide,
-  updateRideHash
+  updateRideHash,
 };

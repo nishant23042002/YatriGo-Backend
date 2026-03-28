@@ -31,7 +31,7 @@ async function startReconciliationWorker() {
     },
     {
       connection: createRedisConnection("worker-reconciliation"),
-      concurrency: 5
+      concurrency: 1
     }
   );
 
@@ -55,4 +55,4 @@ async function startReconciliationWorker() {
   return worker;
 }
 
-module.exports = startReconciliationWorker();
+module.exports = startReconciliationWorker;

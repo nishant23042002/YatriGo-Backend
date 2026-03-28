@@ -6,7 +6,9 @@ const { createRedisConnection, redis } = require("../config/redis");
 const { logger } = require("../config/logger");
 const { keys } = require("../redis/keys");
 const { PersistenceJobs, QueueNames } = require("../utils/constants");
-const { getDriverProfileSnapshot } = require("../services/driver-profile.service");
+const {
+  getDriverProfileSnapshot,
+} = require("../services/driver-profile.service");
 const driverStateService = require("../services/driver-state.service");
 const rideStateService = require("../services/ride-state.service");
 
@@ -18,9 +20,11 @@ async function syncRide(rideId) {
 
   const [timeline, notifiedDrivers] = await Promise.all([
     rideStateService.getRideTimeline(rideId),
-    redis.smembers(keys.rideNotifiedDrivers(rideId))
+    redis.smembers(keys.rideNotifiedDrivers(rideId)),
   ]);
-  const driverSnapshot = ride.driverId ? await getDriverProfileSnapshot(ride.driverId) : null;
+  const driverSnapshot = ride.driverId
+    ? await getDriverProfileSnapshot(ride.driverId)
+    : null;
 
   return Ride.findOneAndUpdate(
     { rideId },
@@ -49,18 +53,18 @@ async function syncRide(rideId) {
           currentBatchId: ride.currentBatchId,
           currentBatchDrivers: ride.currentBatchDrivers,
           currentBatchExpiresAt: ride.currentBatchExpiresAt,
-          notifiedDrivers
+          notifiedDrivers,
         },
         cancellation: ride.cancellation,
         timeline,
-        metadata: ride.metadata
-      }
+        metadata: ride.metadata,
+      },
     },
     {
       upsert: true,
       new: true,
-      setDefaultsOnInsert: true
-    }
+      setDefaultsOnInsert: true,
+    },
   );
 }
 
@@ -79,20 +83,20 @@ async function syncDriver(driverId) {
         lastKnownLocation: {
           lat: driverState.lat,
           lng: driverState.lng,
-          updatedAt: driverState.updatedAt
+          updatedAt: driverState.updatedAt,
         },
-        metadata: driverState.metadata
+        metadata: driverState.metadata,
       },
       $setOnInsert: {
         driverId,
-        userId: driverId
-      }
+        userId: driverId,
+      },
     },
     {
       upsert: true,
       new: true,
-      setDefaultsOnInsert: true
-    }
+      setDefaultsOnInsert: true,
+    },
   );
 }
 
@@ -102,11 +106,9 @@ async function startPersistenceWorker() {
   const worker = new Worker(
     QueueNames.PERSISTENCE,
     async (job) => {
-      logger.info("Persistence job started", {
+      logger.debug("Persistence job started", {
         name: job.name,
         id: job.id,
-        attemptsMade: job.attemptsMade,
-        data: job.data
       });
 
       switch (job.name) {
@@ -121,8 +123,8 @@ async function startPersistenceWorker() {
     },
     {
       connection: createRedisConnection("worker-persistence"),
-      concurrency: 20
-    }
+      concurrency: 20,
+    },
   );
 
   worker.on("completed", (job) => {
@@ -134,7 +136,7 @@ async function startPersistenceWorker() {
       id: job && job.id,
       name: job && job.name,
       attemptsMade: job && job.attemptsMade,
-      message: error.message
+      message: error.message,
     });
   });
 

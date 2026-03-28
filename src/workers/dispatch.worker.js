@@ -11,19 +11,31 @@ const worker = new Worker(
       name: job.name,
       id: job.id,
       attemptsMade: job.attemptsMade,
-      data: job.data
+      data: job.data,
     });
 
     switch (job.name) {
       case DispatchJobs.START_DISPATCH:
-        return dispatchService.startDispatch(job.data.rideId);
+        try {
+          return await dispatchService.startDispatch(job.data.rideId);
+        } catch (err) {
+          logger.error("Dispatch failed", {
+            rideId: job.data.rideId,
+            error: err.message,
+          });
+
+          return null; // prevent retry loop
+        }
       case DispatchJobs.BATCH_TIMEOUT:
-        return dispatchService.handleBatchTimeout(job.data.rideId, job.data.batchId);
+        return dispatchService.handleBatchTimeout(
+          job.data.rideId,
+          job.data.batchId,
+        );
       case DispatchJobs.DRIVER_UNAVAILABLE:
         return dispatchService.markDriverUnavailableDuringDispatch(
           job.data.rideId,
           job.data.driverId,
-          job.data.reason
+          job.data.reason,
         );
       default:
         logger.warn("Unknown dispatch job", { name: job.name });
@@ -32,8 +44,8 @@ const worker = new Worker(
   },
   {
     connection: createRedisConnection("worker-dispatch"),
-    concurrency: 20
-  }
+    concurrency: 20,
+  },
 );
 
 worker.on("completed", (job) => {
@@ -45,7 +57,7 @@ worker.on("failed", (job, error) => {
     id: job && job.id,
     name: job && job.name,
     attemptsMade: job && job.attemptsMade,
-    message: error.message
+    message: error.message,
   });
 });
 

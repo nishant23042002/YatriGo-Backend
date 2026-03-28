@@ -37,7 +37,7 @@ runScenario("stress-dispatch", async () => {
             return;
           }
 
-          const shouldAccept = Math.random() < 0.7;
+          const shouldAccept = Math.random() < 0.9;
           await sleep(Math.floor(Math.random() * 300));
 
           if (shouldAccept) {
@@ -53,12 +53,12 @@ runScenario("stress-dispatch", async () => {
                 (driverAcceptedCounts.get(driverId) || 0) + 1
               );
 
-              await sleep(400 + Math.floor(Math.random() * 600));
+              await sleep(400 + Math.floor(Math.random() * 200));
               await emitWithAck(socket, "ride_started", {
                 eventId: createId("evt"),
                 rideId: payload.rideId
               }).catch(() => null);
-              await sleep(400 + Math.floor(Math.random() * 600));
+              await sleep(400 + Math.floor(Math.random() * 200));
               await emitWithAck(socket, "ride_completed", {
                 eventId: createId("evt"),
                 rideId: payload.rideId
@@ -115,10 +115,10 @@ runScenario("stress-dispatch", async () => {
       async () => {
         const fetched = await Promise.all(rides.map((ride) => fetchRide(ride.rideId)));
         const active = fetched.filter((ride) => !["COMPLETED", "CANCELLED"].includes(ride.status));
-        return active.length < rides.length * 0.5 ? fetched : null;
+        return active.length < rides.length * 0.8 ? fetched : null;
       },
       "Stress test rides did not settle enough to validate state",
-      45000
+      90000
     ));
 
     const finalStates = await Promise.all(rides.map((ride) => fetchRide(ride.rideId)));

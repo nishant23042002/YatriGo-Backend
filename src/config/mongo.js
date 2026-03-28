@@ -22,7 +22,7 @@ async function connectMongo() {
   } finally {
     connectPromise = null;
   }
-  logger.info("MongoDB connected", { uri: env.mongoUri });
+  logger.info("MongoDB connected");
 }
 
 module.exports = { connectMongo, mongoose };

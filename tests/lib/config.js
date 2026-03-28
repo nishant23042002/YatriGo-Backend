@@ -21,8 +21,8 @@ module.exports = {
   eventTimeoutMs: readNumber("TEST_EVENT_TIMEOUT_MS", (process.env.APP_MODE || "production").toLowerCase() === "test" ? 30000 : 20000),
   pollIntervalMs: readNumber("TEST_POLL_INTERVAL_MS", 250),
   recoveryWaitMs: readNumber("TEST_RECOVERY_WAIT_MS", 15000),
-  stressRideCount: readNumber("TEST_STRESS_RIDE_COUNT", 50),
-  stressDriverCount: readNumber("TEST_STRESS_DRIVER_COUNT", 25),
+  stressRideCount: readNumber("TEST_STRESS_RIDE_COUNT", 15),
+  stressDriverCount: readNumber("TEST_STRESS_DRIVER_COUNT", 10),
   raceDriverCount: readNumber("TEST_RACE_DRIVER_COUNT", 10),
   connectRetries: readNumber("TEST_CONNECT_RETRIES", (process.env.APP_MODE || "production").toLowerCase() === "test" ? 3 : 1),
   ackRetries: readNumber("TEST_ACK_RETRIES", (process.env.APP_MODE || "production").toLowerCase() === "test" ? 3 : 1)

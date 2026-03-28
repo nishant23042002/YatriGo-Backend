@@ -8,6 +8,8 @@ const { DriverStatus, RideStatus } = require("../utils/constants");
 const { parseJson, stringify, toNumber } = require("../utils/serializers");
 const { isDriverOnRejectCooldown } = require("./driver-experience.service");
 const { enqueueDriverSync } = require("../queues");
+const { normalizeId } = require("../utils/identity");
+const { withRetryLock } = require("../utils/lock");
 
 function toDriverSnapshot(driverId, hash = {}) {
   if (!hash.status) {
@@ -23,7 +25,7 @@ function toDriverSnapshot(driverId, hash = {}) {
     activeRideId: hash.activeRideId || null,
     lastHeartbeatAt: hash.lastHeartbeatAt || null,
     updatedAt: hash.updatedAt || null,
-    metadata: parseJson(hash.metadata, {})
+    metadata: parseJson(hash.metadata, {}),
   };
 }
 
@@ -44,7 +46,7 @@ async function persistDriverRealtimeState(driverId, state) {
     activeRideId: state.activeRideId || "",
     lastHeartbeatAt: state.lastHeartbeatAt,
     updatedAt: state.updatedAt,
-    metadata: stringify(state.metadata)
+    metadata: stringify(state.metadata),
   });
 
   multi.sadd(keys.onlineDrivers(), driverId);
@@ -52,7 +54,7 @@ async function persistDriverRealtimeState(driverId, state) {
     keys.driverHeartbeat(driverId),
     state.lastHeartbeatAt,
     "EX",
-    env.driver.heartbeatTtlSeconds
+    env.driver.heartbeatTtlSeconds,
   );
 
   if (state.status === DriverStatus.ONLINE) {
@@ -60,6 +62,13 @@ async function persistDriverRealtimeState(driverId, state) {
     multi.srem(keys.busyDrivers(), driverId);
     if (state.lat != null && state.lng != null) {
       multi.geoadd(keys.availableDriversGeo(), state.lng, state.lat, driverId);
+
+      // 🔥 ADD LOG HERE
+      logger.info("GEOADD_DRIVER", {
+        driverId,
+        lat: state.lat,
+        lng: state.lng,
+      });
     }
   } else {
     multi.srem(keys.availableDrivers(), driverId);
@@ -77,12 +86,23 @@ async function persistDriverRealtimeState(driverId, state) {
     multi.del(keys.driverActiveRide(driverId));
   }
 
-  await multi.exec();
-  logger.debug("Driver realtime state persisted in Redis", {
+  const result = await multi.exec();
+
+  logger.info("DRIVER_STATE_PERSISTED", {
     driverId,
     status: state.status,
-    activeRideId: state.activeRideId || null
+    geoAdded: state.lat != null && state.lng != null,
   });
+
+  if (!result) {
+    throw new Error("Redis multi exec failed for driver state");
+  }
+  if (env.logLevel === "debug") {
+    logger.debug("DRIVER_STATE_UPDATED", {
+      driverId,
+      status: state.status,
+    });
+  }
 }
 
 async function cleanupGhostAvailability(driverId) {
@@ -99,32 +119,45 @@ async function cleanupGhostAvailability(driverId) {
 }
 
 async function goOnline({ driverId, lat, lng, socketId, metadata = {} }) {
-  const result = await withLock(
-    redis,
-    keys.driverLock(driverId),
-    env.redis.lockTtlMs,
-    async () => {
-      const existing = (await getDriverState(driverId)) || {};
-      const activeRideId =
-        (await redis.get(keys.driverActiveRide(driverId))) || existing.activeRideId || "";
-      const now = new Date().toISOString();
-      const snapshot = {
-        driverId,
-        status: activeRideId ? DriverStatus.BUSY : DriverStatus.ONLINE,
-        lat,
-        lng,
-        socketId,
-        activeRideId,
-        lastHeartbeatAt: now,
-        updatedAt: now,
-        metadata: { ...existing.metadata, ...metadata }
-      };
+  driverId = normalizeId(driverId);
 
-      await persistDriverRealtimeState(driverId, snapshot);
-      logger.info("Driver went online", { driverId, activeRideId });
-      return snapshot;
-    }
+  const result = await withRetryLock(() =>
+    withLock(
+      redis,
+      keys.driverLock(driverId),
+      env.redis.lockTtlMs,
+      async () => {
+        const existing = (await getDriverState(driverId)) || {};
+        const activeRideId =
+          (await redis.get(keys.driverActiveRide(driverId))) ||
+          existing.activeRideId ||
+          "";
+        const now = new Date().toISOString();
+        const snapshot = {
+          driverId,
+          status: activeRideId ? DriverStatus.BUSY : DriverStatus.ONLINE,
+          lat,
+          lng,
+          socketId,
+          activeRideId,
+          lastHeartbeatAt: now,
+          updatedAt: now,
+          metadata: { ...existing.metadata, ...metadata },
+        };
+
+        await persistDriverRealtimeState(driverId, snapshot);
+        logger.info("Driver went online", { driverId, activeRideId });
+        return snapshot;
+      },
+    ),
   );
+
+  const exists = await redis.exists(keys.driverHash(driverId));
+
+  if (!exists) {
+    logger.error("Driver state not persisted after goOnline", { driverId });
+    throw new AppError("Driver state persistence failed", 500);
+  }
 
   if (!result) {
     throw new AppError("Driver state is busy, retry", 409, "DRIVER_LOCKED");
@@ -135,33 +168,45 @@ async function goOnline({ driverId, lat, lng, socketId, metadata = {} }) {
 }
 
 async function heartbeat({ driverId, lat, lng, socketId }) {
-  const result = await withLock(
-    redis,
-    keys.driverLock(driverId),
-    env.redis.lockTtlMs,
-    async () => {
-      const existing = await getDriverState(driverId);
-      if (!existing) {
-        throw new AppError("Driver is not registered online", 404, "DRIVER_NOT_ONLINE");
-      }
+  driverId = normalizeId(driverId);
 
-      const now = new Date().toISOString();
-      const snapshot = {
-        ...existing,
-        lat,
-        lng,
-        socketId: socketId || existing.socketId,
-        lastHeartbeatAt: now,
-        updatedAt: now
-      };
+  const result = await withRetryLock(() =>
+    withLock(
+      redis,
+      keys.driverLock(driverId),
+      env.redis.lockTtlMs,
+      async () => {
+        const existing = await getDriverState(driverId);
+        if (!existing) {
+          throw new AppError(
+            "Driver is not registered online",
+            404,
+            "DRIVER_NOT_ONLINE",
+          );
+        }
 
-      await persistDriverRealtimeState(driverId, snapshot);
-      return snapshot;
-    }
+        const now = new Date().toISOString();
+        const snapshot = {
+          ...existing,
+          lat,
+          lng,
+          socketId: socketId || existing.socketId,
+          lastHeartbeatAt: now,
+          updatedAt: now,
+        };
+
+        await persistDriverRealtimeState(driverId, snapshot);
+        return snapshot;
+      },
+    ),
   );
 
   if (!result) {
-    throw new AppError("Driver heartbeat lock busy, retry", 409, "DRIVER_LOCKED");
+    throw new AppError(
+      "Driver heartbeat lock busy, retry",
+      409,
+      "DRIVER_LOCKED",
+    );
   }
 
   await enqueueDriverSync(driverId, "HEARTBEAT", result.updatedAt);
@@ -169,19 +214,23 @@ async function heartbeat({ driverId, lat, lng, socketId }) {
     driverId,
     activeRideId: result.activeRideId || null,
     lat: result.lat,
-    lng: result.lng
+    lng: result.lng,
   });
   return result;
 }
 
 async function goOffline({ driverId, reason = "MANUAL" }) {
+  driverId = normalizeId(driverId);
+
   const result = await withLock(
     redis,
     keys.driverLock(driverId),
     env.redis.lockTtlMs,
     async () => {
       const existing = await getDriverState(driverId);
-      const pendingRideIds = await redis.smembers(keys.driverPendingDispatches(driverId));
+      const pendingRideIds = await redis.smembers(
+        keys.driverPendingDispatches(driverId),
+      );
       const activeRideId =
         (await redis.get(keys.driverActiveRide(driverId))) ||
         (existing ? existing.activeRideId : null);
@@ -205,20 +254,25 @@ async function goOffline({ driverId, reason = "MANUAL" }) {
         updatedAt: now,
         metadata: stringify({
           ...(existing ? existing.metadata : {}),
-          lastOfflineReason: reason
-        })
+          lastOfflineReason: reason,
+        }),
       });
       await multi.exec();
 
-      logger.warn("Driver went offline", { driverId, reason, activeRideId, pendingRideIds });
+      logger.warn("Driver went offline", {
+        driverId,
+        reason,
+        activeRideId,
+        pendingRideIds,
+      });
 
       return {
         driverId,
         activeRideId,
         pendingRideIds,
-        previousStatus: existing ? existing.status : DriverStatus.OFFLINE
+        previousStatus: existing ? existing.status : DriverStatus.OFFLINE,
       };
-    }
+    },
   );
 
   if (!result) {
@@ -245,16 +299,16 @@ async function restoreDriverSession(driverId, socketId) {
         ...existing,
         socketId,
         lastHeartbeatAt: now,
-        updatedAt: now
+        updatedAt: now,
       };
 
       await persistDriverRealtimeState(driverId, snapshot);
       logger.info("Driver session restored after reconnect", {
         driverId,
-        status: snapshot.status
+        status: snapshot.status,
       });
       return snapshot;
-    }
+    },
   );
 
   if (!result) {
@@ -277,7 +331,7 @@ async function getNearestAvailableDrivers(origin, radiusKm, count) {
     "km",
     "ASC",
     "COUNT",
-    count
+    count,
   );
 
   return Array.isArray(response) ? response : [];
@@ -293,19 +347,29 @@ async function scanStaleDrivers() {
       continue;
     }
 
-    staleDrivers.push(await goOffline({ driverId, reason: "HEARTBEAT_TIMEOUT" }));
+    staleDrivers.push(
+      await goOffline({ driverId, reason: "HEARTBEAT_TIMEOUT" }),
+    );
   }
 
   return staleDrivers;
 }
 
 async function isDriverReservable(driverId) {
-  const [driverState, activeRideId, reservation, heartbeatExists, rejectCooldown] = await Promise.all([
+  driverId = normalizeId(driverId);
+
+  const [
+    driverState,
+    activeRideId,
+    reservation,
+    heartbeatExists,
+    rejectCooldown,
+  ] = await Promise.all([
     getDriverState(driverId),
     redis.get(keys.driverActiveRide(driverId)),
     redis.get(keys.driverReservation(driverId)),
     redis.exists(keys.driverHeartbeat(driverId)),
-    isDriverOnRejectCooldown(driverId)
+    isDriverOnRejectCooldown(driverId),
   ]);
 
   if (!driverState) {
@@ -315,10 +379,6 @@ async function isDriverReservable(driverId) {
 
   if (!heartbeatExists) {
     await cleanupGhostAvailability(driverId);
-    return false;
-  }
-
-  if (driverState.status !== DriverStatus.ONLINE || activeRideId || reservation || rejectCooldown) {
     return false;
   }
 
@@ -338,7 +398,11 @@ async function getActiveRideId(driverId) {
 }
 
 async function canTrackLocation(status) {
-  return [RideStatus.ACCEPTED, RideStatus.ARRIVING, RideStatus.ONGOING].includes(status);
+  return [
+    RideStatus.ACCEPTED,
+    RideStatus.ARRIVING,
+    RideStatus.ONGOING,
+  ].includes(status);
 }
 
 module.exports = {
@@ -354,5 +418,5 @@ module.exports = {
   heartbeat,
   isDriverReservable,
   restoreDriverSession,
-  scanStaleDrivers
+  scanStaleDrivers,
 };
