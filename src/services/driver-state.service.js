@@ -10,6 +10,7 @@ const { isDriverOnRejectCooldown } = require("./driver-experience.service");
 const { enqueueDriverSync } = require("../queues");
 const { normalizeId } = require("../utils/identity");
 const { withRetryLock } = require("../utils/lock");
+const Driver = require("../models/Driver");
 
 function toDriverSnapshot(driverId, hash = {}) {
   if (!hash.status) {
@@ -57,18 +58,20 @@ async function persistDriverRealtimeState(driverId, state) {
     env.driver.heartbeatTtlSeconds,
   );
 
-  if (state.status === DriverStatus.ONLINE) {
+  if (state.status === DriverStatus.ONLINE && !state.activeRideId) {
     multi.sadd(keys.availableDrivers(), driverId);
     multi.srem(keys.busyDrivers(), driverId);
     if (state.lat != null && state.lng != null) {
       multi.geoadd(keys.availableDriversGeo(), state.lng, state.lat, driverId);
 
       // 🔥 ADD LOG HERE
-      logger.info("GEOADD_DRIVER", {
-        driverId,
-        lat: state.lat,
-        lng: state.lng,
-      });
+      if (env.logLevel === "debug") {
+        logger.info("GEOADD_DRIVER", {
+          driverId,
+          lat: state.lat,
+          lng: state.lng,
+        });
+      }
     }
   } else {
     multi.srem(keys.availableDrivers(), driverId);
@@ -115,7 +118,23 @@ async function cleanupGhostAvailability(driverId) {
   multi.del(keys.driverReservation(driverId));
   await multi.exec();
 
-  logger.warn("Ghost driver cleaned from Redis indexes", { driverId });
+  // 🔥 SYNC MONGO (IMPORTANT)
+  try {
+    await Driver.updateOne(
+      { driverId },
+      {
+        status: "OFFLINE",
+        updatedAt: new Date(),
+      },
+    );
+  } catch (e) {
+    logger.error("Mongo sync failed in ghost cleanup", {
+      driverId,
+      error: e.message,
+    });
+  }
+
+  logger.warn("Ghost driver cleaned + Mongo synced", { driverId });
 }
 
 async function goOnline({ driverId, lat, lng, socketId, metadata = {} }) {
@@ -350,6 +369,11 @@ async function scanStaleDrivers() {
     staleDrivers.push(
       await goOffline({ driverId, reason: "HEARTBEAT_TIMEOUT" }),
     );
+
+    await Driver.updateOne(
+      { driverId },
+      { status: "OFFLINE", updatedAt: new Date() },
+    );
   }
 
   return staleDrivers;
@@ -376,11 +400,15 @@ async function isDriverReservable(driverId) {
     await cleanupGhostAvailability(driverId);
     return false;
   }
-
   if (!heartbeatExists) {
     await cleanupGhostAvailability(driverId);
     return false;
   }
+
+  if (driverState.status !== DriverStatus.ONLINE) return false;
+  if (activeRideId) return false; // 🚨 critical
+  if (reservation) return false;
+  if (rejectCooldown) return false;
 
   return true;
 }

@@ -20,6 +20,7 @@ const {
   sanitizePayload,
   socketMeta,
 } = require("./debug");
+const Driver = require("../models/Driver");
 
 async function createSocketServer(httpServer) {
   const io = new Server(httpServer, {
@@ -150,14 +151,51 @@ async function createSocketServer(httpServer) {
         }
       });
 
-      socket.on("disconnect", (reason) => {
-        logger.warn(
-          "Socket disconnected",
-          socketMeta(socket, {
-            category: "SOCKET",
-            reason,
-          }),
-        );
+      socket.on("disconnect", async (reason) => {
+        logger.warn("Socket disconnected", {
+          category: "SOCKET",
+          reason,
+        });
+
+        if (socket.data.role === "DRIVER") {
+          const driverId = socket.data.actorId;
+
+          let success = false;
+
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              await driverStateService.goOffline({
+                driverId,
+                reason: "SOCKET_DISCONNECT",
+              });
+
+              success = true;
+              logger.info("Driver disconnect cleanup success", {
+                driverId,
+                attempt,
+              });
+
+              break;
+            } catch (e) {
+              logger.warn("Disconnect cleanup retry", {
+                driverId,
+                attempt,
+                error: e.message,
+              });
+
+              await new Promise((res) => setTimeout(res, 100));
+            }
+          }
+
+          // 🔥 FINAL FALLBACK
+          if (!success) {
+            logger.error("❌ HARD FAILURE: forcing ghost cleanup", {
+              driverId,
+            });
+
+            await driverStateService.cleanupGhostAvailability(driverId);
+          }
+        }
       });
     } catch (error) {
       logger.error("Socket connection init failed", {

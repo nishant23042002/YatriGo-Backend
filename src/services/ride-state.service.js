@@ -153,7 +153,9 @@ async function releaseDriverAvailability(driverId, rideId, now) {
     multi.del(keys.driverActiveRide(driverId));
   }
 
-  if (driverStatus === DriverStatus.OFFLINE) {
+  const heartbeatExists = await redis.exists(keys.driverHeartbeat(driverId));
+
+  if (driverStatus === DriverStatus.OFFLINE || !heartbeatExists) {
     multi.hset(keys.driverHash(driverId), {
       activeRideId: "",
       updatedAt: now,
@@ -165,8 +167,10 @@ async function releaseDriverAvailability(driverId, rideId, now) {
       updatedAt: now,
       status: DriverStatus.ONLINE,
     });
+
     multi.sadd(keys.onlineDrivers(), driverId);
     multi.sadd(keys.availableDrivers(), driverId);
+
     if (driverHash.lat && driverHash.lng) {
       multi.geoadd(
         keys.availableDriversGeo(),
