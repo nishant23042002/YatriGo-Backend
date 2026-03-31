@@ -11,6 +11,7 @@ const { enqueueDriverSync } = require("../queues");
 const { normalizeId } = require("../utils/identity");
 const { withRetryLock } = require("../utils/lock");
 const Driver = require("../models/Driver");
+const { emitDriverStateUpdate } = require("./socket-publisher.service");
 
 function toDriverSnapshot(driverId, hash = {}) {
   if (!hash.status) {
@@ -277,6 +278,15 @@ async function goOffline({ driverId, reason = "MANUAL" }) {
         }),
       });
       await multi.exec();
+
+      const updatedState = {
+        driverId,
+        status: DriverStatus.OFFLINE,
+        activeRideId,
+        updatedAt: now,
+      };
+
+      await emitDriverStateUpdate(driverId, updatedState);
 
       logger.warn("Driver went offline", {
         driverId,

@@ -27,7 +27,10 @@ const {
   notifyDriverArriving,
 } = require("./notification.service");
 const { calculateFinalFare, estimateFare } = require("./pricing.service");
-const { emitRideCancelledToDriver } = require("./socket-publisher.service");
+const {
+  emitRideCancelledToDriver,
+  emitRideStatusUpdate,
+} = require("./socket-publisher.service");
 
 async function refreshRideRealtimeKeys(rideId) {
   const multi = redis.multi();
@@ -356,7 +359,18 @@ async function transitionRide(rideId, nextStatus, options = {}) {
         throw new AppError("Ride not found", 404, "RIDE_NOT_FOUND");
       }
 
+      // ✅ IDEMPOTENT CHECK
+      if (ride.status === nextStatus) {
+        logger.warn("Duplicate transition ignored", {
+          rideId,
+          status: nextStatus,
+        });
+        return await getRide(rideId);
+      }
+
+      // ❌ only block invalid transitions
       assertTransition(ride.status, nextStatus);
+
       const now = new Date().toISOString();
       const update = {
         status: nextStatus,
@@ -437,17 +451,21 @@ async function transitionRide(rideId, nextStatus, options = {}) {
       }
 
       await enqueueRideSync(rideId, snapshot.version);
+
       if (nextStatus === RideStatus.ARRIVING) {
         await notifyDriverArriving(snapshot);
+        await emitRideStatusUpdate(snapshot); // 🔥 ADD
       } else if (nextStatus === RideStatus.ONGOING) {
         await notifyRideStarted(snapshot);
+        await emitRideStatusUpdate(snapshot); // 🔥 ADD
       } else if (nextStatus === RideStatus.COMPLETED) {
         await notifyRideCompleted(snapshot);
-      } else if (nextStatus === RideStatus.CANCELLED) {
-        await notifyRideCancelled(snapshot);
+        await emitRideStatusUpdate(snapshot); // 🔥 ADD
       } else {
         await notifyRideStatusUpdate(snapshot);
+        await emitRideStatusUpdate(snapshot); // 🔥 ADD
       }
+
       logger.info("Ride state transitioned", {
         rideId,
         previousStatus: ride.status,

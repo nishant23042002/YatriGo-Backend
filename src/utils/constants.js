@@ -5,13 +5,13 @@ const RideStatus = Object.freeze({
   ARRIVING: "ARRIVING",
   ONGOING: "ONGOING",
   COMPLETED: "COMPLETED",
-  CANCELLED: "CANCELLED"
+  CANCELLED: "CANCELLED",
 });
 
 const DriverStatus = Object.freeze({
   ONLINE: "ONLINE",
   OFFLINE: "OFFLINE",
-  BUSY: "BUSY"
+  BUSY: "BUSY",
 });
 
 const SocketEvents = Object.freeze({
@@ -19,53 +19,65 @@ const SocketEvents = Object.freeze({
     RIDE_REQUESTED: "ride_requested",
     DRIVER_ASSIGNED: "driver_assigned",
     DRIVER_LOCATION_UPDATE: "driver_location_update",
-    RIDE_STATUS_UPDATE: "ride_status_update"
+    RIDE_STATUS_UPDATE: "ride_status_update",
   },
   DRIVER: {
     NEW_RIDE_REQUEST: "new_ride_request",
     RIDE_ASSIGNED: "ride_assigned",
-    RIDE_CANCELLED: "ride_cancelled"
-  }
+    RIDE_CANCELLED: "ride_cancelled",
+    RIDE_STATUS_UPDATE: "ride_status_update",
+  },
 });
 
 const InternalSocketEvents = Object.freeze({
   SNAPSHOT: "snapshot",
-  DRIVER_CONNECTION_LOST: "driver_connection_lost"
+  DRIVER_CONNECTION_LOST: "driver_connection_lost",
 });
 
 const QueueNames = Object.freeze({
   DISPATCH: "dispatch",
   PERSISTENCE: "persistence",
-  RECONCILIATION: "reconciliation"
+  RECONCILIATION: "reconciliation",
 });
 
 const DispatchJobs = Object.freeze({
   START_DISPATCH: "start-dispatch",
   BATCH_TIMEOUT: "batch-timeout",
-  DRIVER_UNAVAILABLE: "driver-unavailable"
+  DRIVER_UNAVAILABLE: "driver-unavailable",
 });
 
 const PersistenceJobs = Object.freeze({
   SYNC_RIDE: "sync-ride",
-  SYNC_DRIVER: "sync-driver"
+  SYNC_DRIVER: "sync-driver",
 });
 
 const ReconciliationJobs = Object.freeze({
   STALE_DRIVER_SCAN: "stale-driver-scan",
   DISPATCH_RECOVERY_SCAN: "dispatch-recovery-scan",
-  REHYDRATE_STATE: "rehydrate-state"
+  REHYDRATE_STATE: "rehydrate-state",
 });
 
-const TerminalRideStatuses = new Set([RideStatus.COMPLETED, RideStatus.CANCELLED]);
+const TerminalRideStatuses = new Set([
+  RideStatus.COMPLETED,
+  RideStatus.CANCELLED,
+]);
 
 const RideTransitions = Object.freeze({
   [RideStatus.REQUESTED]: [RideStatus.DISPATCHING, RideStatus.CANCELLED],
   [RideStatus.DISPATCHING]: [RideStatus.ACCEPTED, RideStatus.CANCELLED],
-  [RideStatus.ACCEPTED]: [RideStatus.ARRIVING, RideStatus.DISPATCHING, RideStatus.CANCELLED],
-  [RideStatus.ARRIVING]: [RideStatus.ONGOING, RideStatus.DISPATCHING, RideStatus.CANCELLED],
+  [RideStatus.ACCEPTED]: [
+    RideStatus.ARRIVING,
+    RideStatus.DISPATCHING,
+    RideStatus.CANCELLED,
+  ],
+  [RideStatus.ARRIVING]: [
+    RideStatus.ONGOING,
+    RideStatus.DISPATCHING,
+    RideStatus.CANCELLED,
+  ],
   [RideStatus.ONGOING]: [RideStatus.COMPLETED, RideStatus.CANCELLED],
   [RideStatus.COMPLETED]: [],
-  [RideStatus.CANCELLED]: []
+  [RideStatus.CANCELLED]: [],
 });
 
 module.exports = {
@@ -78,5 +90,5 @@ module.exports = {
   RideStatus,
   RideTransitions,
   SocketEvents,
-  TerminalRideStatuses
+  TerminalRideStatuses,
 };

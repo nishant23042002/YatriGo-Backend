@@ -160,41 +160,19 @@ async function createSocketServer(httpServer) {
         if (socket.data.role === "DRIVER") {
           const driverId = socket.data.actorId;
 
-          let success = false;
+          // 🔥 DO NOT mark offline immediately
+          logger.warn("Driver temporary disconnect (waiting for reconnect)", {
+            driverId,
+            reason,
+          });
 
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-              await driverStateService.goOffline({
-                driverId,
-                reason: "SOCKET_DISCONNECT",
-              });
-
-              success = true;
-              logger.info("Driver disconnect cleanup success", {
-                driverId,
-                attempt,
-              });
-
-              break;
-            } catch (e) {
-              logger.warn("Disconnect cleanup retry", {
-                driverId,
-                attempt,
-                error: e.message,
-              });
-
-              await new Promise((res) => setTimeout(res, 100));
-            }
-          }
-
-          // 🔥 FINAL FALLBACK
-          if (!success) {
-            logger.error("❌ HARD FAILURE: forcing ghost cleanup", {
-              driverId,
-            });
-
-            await driverStateService.cleanupGhostAvailability(driverId);
-          }
+          // optional: store last disconnect time
+          await redis.set(
+            `driver:${driverId}:lastDisconnect`,
+            Date.now(),
+            "EX",
+            15, // 15 sec grace
+          );
         }
       });
     } catch (error) {
@@ -211,7 +189,17 @@ async function createSocketServer(httpServer) {
   await socketSubscriberRedis.subscribe(keys.socketPubSubChannel());
   socketSubscriberRedis.on("message", (_channel, message) => {
     try {
-      const parsed = JSON.parse(message);
+      let parsed;
+      try {
+        parsed = JSON.parse(message);
+      } catch (error) {
+        logger.error("❌ Invalid PubSub message (SKIPPED)", {
+          raw: message,
+          error: error.message,
+        });
+        return; // 🚫 DO NOT CRASH SOCKET
+      }
+
       logger.debug("Socket pubsub outbound fanout", {
         category: "SOCKET",
         direction: "out",
@@ -220,6 +208,15 @@ async function createSocketServer(httpServer) {
         eventId: parsed.eventId,
         payload: sanitizePayload(parsed.payload),
       });
+
+      if (!parsed.event) {
+        logger.error("❌ Invalid socket event (SKIPPED)", {
+          room: parsed.room,
+          payload: parsed.payload,
+        });
+        return;
+      }
+
       io.to(parsed.room).emit(parsed.event, {
         ...parsed.payload,
         eventId: parsed.eventId,
