@@ -31,6 +31,7 @@ const {
   emitNewRideRequest,
   emitRideAssignedToDriver,
   emitRideCancelledToDriver,
+  emitRideStatusUpdate,
 } = require("./socket-publisher.service");
 const { normalizeId } = require("../utils/identity");
 
@@ -606,11 +607,7 @@ async function acceptRide(rideId, driverId) {
       driverId,
       reasonCode: Number(version),
     });
-    throw new AppError(
-      "Ride can no longer be accepted",
-      409,
-      "RIDE_ACCEPT_REJECTED",
-    );
+    throw new AppError("RIDE_ALREADY_ACCEPTED", 409, "RIDE_ALREADY_ACCEPTED");
   }
 
   const ride = await getRide(rideId);
@@ -629,10 +626,9 @@ async function acceptRide(rideId, driverId) {
   await notifyDriverAssigned(ride);
   await notifyRideStatusUpdate(ride);
   await emitRideAssignedToDriver(driverId, ride);
+  await emitRideStatusUpdate(ride);
 
   for (const otherDriverId of otherDrivers) {
-    if(otherDriverId === driverId) continue;
-    
     await emitRideCancelledToDriver(otherDriverId, {
       rideId,
       version: ride.version,
