@@ -184,6 +184,7 @@ async function goOnline({ driverId, lat, lng, socketId, metadata = {} }) {
   }
 
   await enqueueDriverSync(driverId, "ONLINE", result.updatedAt);
+  await emitDriverStateUpdate(driverId, result);
   return result;
 }
 
@@ -203,6 +204,10 @@ async function heartbeat({ driverId, lat, lng, socketId }) {
             404,
             "DRIVER_NOT_ONLINE",
           );
+        }
+
+        if (existing.status === DriverStatus.OFFLINE) {
+          return existing;
         }
 
         const now = new Date().toISOString();

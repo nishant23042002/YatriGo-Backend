@@ -35,28 +35,53 @@ function ackFailure(socket, eventName, ack, error) {
 }
 
 async function validateInboundEvent(socket, eventName, payload = {}) {
+  // 🔥 STEP 1 — Skip idempotency for toggle/state events
+  const skipIdempotencyEvents = [
+    "go_online",
+    "go_offline",
+    "location_heartbeat",
+  ];
+
+  if (skipIdempotencyEvents.includes(eventName)) {
+    return {
+      accepted: true,
+      skipped: true,
+    };
+  }
+
+  // 🔥 STEP 2 — Build strong idempotency key
   const idempotencyKey =
-    payload.eventId || `${socket.id}:${eventName}:${Date.now()}`;
+    payload.eventId ||
+    `${socket.data.actorId}:${eventName}:${payload.rideId || "NA"}`;
+
+  // 🔥 STEP 3 — Check Redis idempotency
   const accepted = await markIdempotent(
     redis,
     "socket-inbound",
     idempotencyKey,
   );
 
+  // ✅ FIRST TIME EVENT
   if (accepted) {
-    return { accepted: true, idempotencyKey };
+    return {
+      accepted: true,
+      idempotencyKey,
+    };
   }
 
+  // ⚠️ DUPLICATE DETECTED
   logger.warn(
     "Duplicate socket event detected",
     socketMeta(socket, {
       category: "SOCKET",
       eventName,
+      idempotencyKey,
       payload: sanitizePayload(payload),
       mode: env.appMode,
     }),
   );
 
+  // 🔥 STEP 4 — Handle duplicate behavior
   if (env.testing.tolerateDuplicateSocketEvents) {
     return {
       accepted: false,
@@ -83,7 +108,12 @@ async function handleSocketEvent(socket, eventName, payload, ack, handler) {
     );
     const isCriticalEvent = eventName === "accept_ride";
 
-    if (!validation.accepted) {
+    if (!validation.accepted && validation.duplicate) {
+      logger.debug("Duplicate event skipped", {
+        eventName,
+        idempotencyKey: validation.idempotencyKey,
+      });
+
       if (isCriticalEvent) {
         return ackFailure(
           socket,
