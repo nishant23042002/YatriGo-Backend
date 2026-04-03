@@ -129,6 +129,9 @@ function formatMeta(meta = {}) {
     "batchId",
     "reason",
     "eventName",
+    "error",
+    "message",
+    "name"
   ];
 
   const filtered = {};

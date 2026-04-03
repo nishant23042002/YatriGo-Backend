@@ -4,6 +4,7 @@ const helmet = require("helmet");
 const { authenticateHttp } = require("./middleware/auth.middleware");
 const customerRoutes = require("./routes/customer.routes");
 const driverRoutes = require("./routes/driver.routes");
+const pricingRoutes = require("./routes/pricing.routes");
 const { failure } = require("./utils/response");
 
 function createApp() {
@@ -19,6 +20,7 @@ function createApp() {
 
   app.use("/api/customers", authenticateHttp("CUSTOMER"), customerRoutes);
   app.use("/api/drivers", authenticateHttp("DRIVER"), driverRoutes);
+  app.use("/api/pricing", pricingRoutes);
 
   app.use((error, _req, res, _next) => failure(res, error));
 

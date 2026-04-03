@@ -143,8 +143,8 @@ async function main() {
     rideId: null,
     driverSocket: null,
     customerSocket: null,
-    lat: 26.9124,
-    lng: 75.7873,
+    lat: 18.9582,
+    lng: 72.8319,
   };
 
   try {

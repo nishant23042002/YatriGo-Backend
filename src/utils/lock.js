@@ -56,8 +56,6 @@ async function withRetryLock(fn, retries = 3, delay = 50) {
   return null;
 }
 
-module.exports = { withRetryLock };
-
 module.exports = {
   acquireLock,
   releaseLock,
