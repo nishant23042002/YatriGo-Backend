@@ -31,6 +31,7 @@ const {
   emitRideCancelledToDriver,
   emitRideStatusUpdate,
 } = require("./socket-publisher.service");
+const { version } = require("mongoose");
 
 async function refreshRideRealtimeKeys(rideId) {
   const multi = redis.multi();
@@ -47,6 +48,7 @@ async function refreshRideRealtimeKeys(rideId) {
 
 function toRideSnapshot(hash = {}) {
   if (!hash.status) {
+    logger.warn("EMPTY RIDE HASH", { hash });
     return null;
   }
 
@@ -110,7 +112,17 @@ async function getRideTimeline(rideId) {
 
 async function getRide(rideId) {
   const hash = await redis.hgetall(keys.rideHash(rideId));
-  return toRideSnapshot(hash);
+
+  const ride = toRideSnapshot(hash);
+
+  logger.debug("Fetching ride from Redis", {
+    rideId,
+    status: ride?.status,
+    version: ride?.version,
+    driverId: ride?.driverId,
+  });
+
+  return ride;
 }
 
 function assertTransition(currentStatus, nextStatus) {

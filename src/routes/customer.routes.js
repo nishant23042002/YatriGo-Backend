@@ -7,5 +7,7 @@ const router = express.Router();
 router.post("/rides/request", asyncHandler(customerController.requestRide));
 router.post("/rides/:rideId/cancel", asyncHandler(customerController.cancelRide));
 router.get("/rides/:rideId", asyncHandler(customerController.getRide));
+router.get("/rides/:rideId/snapshot", asyncHandler(customerController.getRideSnapshot));
+router.get("/rides/:rideId/status", asyncHandler(customerController.getRideStatus));
 
 module.exports = router;
